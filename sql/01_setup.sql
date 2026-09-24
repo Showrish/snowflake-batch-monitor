@@ -1,0 +1,15 @@
+-- 1. SETUP: compute, a database and a schema for raw data
+
+CREATE WAREHOUSE IF NOT EXISTS PREP_WH
+  WAREHOUSE_SIZE = 'XSMALL'   -- smallest and cheapest size
+  AUTO_SUSPEND = 60           -- switch off after 60 idle seconds
+  AUTO_RESUME = TRUE;         -- switch back on when a query runs
+
+CREATE DATABASE IF NOT EXISTS BATCH_MONITOR;
+CREATE SCHEMA IF NOT EXISTS BATCH_MONITOR.RAW;
+
+USE WAREHOUSE PREP_WH;
+USE SCHEMA BATCH_MONITOR.RAW;
+
+-- Check: expect PREP_WH, BATCH_MONITOR, RAW
+SELECT CURRENT_ROLE(), CURRENT_WAREHOUSE(), CURRENT_DATABASE(), CURRENT_SCHEMA();
