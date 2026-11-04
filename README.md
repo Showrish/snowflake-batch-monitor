@@ -1,25 +1,20 @@
-# Batch Monitor: Snowflake pipeline and Streamlit app for pharmaceutical batch data
+# Batch Monitor
 
-A small, end-to-end data integrity project built in Snowflake on real, publicly released pharmaceutical
-manufacturing data. It loads 1,005 production batches, preserves the source file untouched, cleans it in a
-view, checks every step against expected values, and serves a Streamlit in Snowflake dashboard for
-integrity checks, process trending and material genealogy.
+**Trace pharmaceutical batch data from a raw file to verified Snowflake views and a review dashboard.**
 
-> **Intended use:** demonstration only, on a public and anonymized dataset. This is not a validated system
-> and must not be used for GMP decisions.
+An end-to-end data integrity project using **1,005 publicly released production batches**. Batch Monitor preserves the source, standardizes it in a view, reconciles the results against independent pandas calculations, and includes a read-only **Streamlit in Snowflake** app for data checks, process trending, and material genealogy.
 
-![Process trending](screenshots/process_trending.png)
+**[Explore the dashboard](#the-app)** · [See profiling findings](#what-profiling-the-file-turned-up) · [Reproduce the pipeline](#reproduce-it)
 
-## Data
+| Coverage | Data integrity | Operational analysis |
+| :--- | :--- | :--- |
+| **1,005 batches · 25 product codes** | Raw source preserved and transformations independently checked | **I-MR charts**, quality review, and raw-material genealogy |
 
-Laboratory data for 1,005 production batches of a film-coated tablet made by direct compression,
-Nov 2018 to Apr 2021, across 25 product codes. Each row is one finished batch, with its raw material
-lots (genealogy), incoming material tests, in-process tablet checks and final product quality results.
+`Snowflake` · `SQL` · `Python` · `pandas` · `Streamlit` · `HTML / CSS / JavaScript`
 
-Source: Žagar J. and Mihelič J., *Big data collection in pharmaceutical manufacturing and its use for
-product quality predictions*, Scientific Data (2022), [doi:10.1038/s41597-022-01203-x](https://doi.org/10.1038/s41597-022-01203-x).
-The file is available from the [figshare collection](https://doi.org/10.6084/m9.figshare.c.5645578.v1)
-and is not included in this repository.
+> **Demonstration only.** The dataset is public and anonymized. This is not a validated system and must not be used for GMP decisions.
+
+![Batch Monitor process trending dashboard](screenshots/process_trending.png)
 
 ## What profiling the file turned up
 
@@ -47,6 +42,8 @@ calculation (`verify_profile.py`).
 
 ## The app
 
+**Availability:** the Snowflake trial has expired. The screenshots show the app as it ran during the trial.
+
 ![Data integrity](screenshots/data_integrity.png)
 
 * **Data integrity:** record count reconciliation, batch ID uniqueness, date and label conversion,
@@ -61,6 +58,17 @@ calculation (`verify_profile.py`).
 The dashboard is custom HTML, CSS and JavaScript, fully inline because Streamlit in Snowflake blocks
 external scripts, styles and fonts.
 
+## Data
+
+Laboratory data for 1,005 production batches of a film-coated tablet made by direct compression,
+Nov 2018 to Apr 2021, across 25 product codes. Each row is one finished batch, with its raw material
+lots (genealogy), incoming material tests, in-process tablet checks and final product quality results.
+
+Source: Žagar J. and Mihelič J., *Big data collection in pharmaceutical manufacturing and its use for
+product quality predictions*, Scientific Data (2022), [doi:10.1038/s41597-022-01203-x](https://doi.org/10.1038/s41597-022-01203-x).
+The file is available from the [figshare collection](https://doi.org/10.6084/m9.figshare.c.5645578.v1)
+and is not included in this repository.
+
 ## Snowflake features exercised
 
 Warehouses, stages, file formats, `COPY INTO` with validation mode, views, zero-copy cloning, Time Travel
@@ -74,6 +82,18 @@ read-only role, and Streamlit in Snowflake.
 3. Run `sql/03_clean_view.sql` and compare the checks with their expected values.
 4. Optionally run `sql/04_exercises.sql`.
 5. Create a Streamlit app in `BATCH_MONITOR.CLEAN` on `PREP_WH` and paste in `app/batch_monitor_app.py`.
+
+## Project files
+
+| Path | Purpose |
+| :--- | :--- |
+| [`sql/01_setup.sql`](sql/01_setup.sql) | Snowflake environment setup |
+| [`sql/02_load.sql`](sql/02_load.sql) | Validate and load the source |
+| [`sql/03_clean_view.sql`](sql/03_clean_view.sql) | Typed, standardized view and checks |
+| [`sql/04_exercises.sql`](sql/04_exercises.sql) | Optional Snowflake exercises |
+| [`app/batch_monitor_app.py`](app/batch_monitor_app.py) | Read-only dashboard |
+| [`verify_profile.py`](verify_profile.py) | Independent pandas verification |
+| [`screenshots/`](screenshots/) | Dashboard examples |
 
 ## Limitations
 
