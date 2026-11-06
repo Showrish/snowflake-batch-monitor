@@ -85,7 +85,7 @@ These checks verify the data. The app is not a validated system in the GMP sense
 
 ## The app
 
-**Live:** [https://YOUR-APP.streamlit.app](https://batch-monitor.streamlit.app), running on DuckDB.
+**Live:** [https://batch-monitor.streamlit.app](https://batch-monitor.streamlit.app), running on DuckDB.
 
 ![Data integrity](screenshots/data_integrity.png)
 
