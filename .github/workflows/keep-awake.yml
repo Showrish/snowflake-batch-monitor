@@ -12,20 +12,22 @@ on:
 jobs:
   visit:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
-      APP_URL: https://batch-monitor.streamlit.app/   # replace with your app's link
+      APP_URL: https://batch-monitor.streamlit.app
     steps:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
       - name: Install a headless browser
+        timeout-minutes: 6
         run: |
           pip install playwright
           python -m playwright install --with-deps chromium
 
       - name: Visit the app and wake it if needed
+        timeout-minutes: 4
         run: |
           python - <<'PY'
           import os
