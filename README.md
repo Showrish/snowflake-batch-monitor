@@ -4,7 +4,7 @@
 
 An end-to-end data integrity project using **1,005 publicly released production batches**. Batch Monitor preserves the source, standardizes it in a view, reconciles the results against independent pandas calculations, and includes a read-only **Streamlit** app for data checks, process trending, and material genealogy. It was built in Snowflake, and since the trial ended it also runs on DuckDB, which powers the live app.
 
-**[Open the live app](https://YOUR-APP.streamlit.app)** · [See profiling findings](#what-profiling-the-file-turned-up) · [How it works](#how-it-works) · [Reproduce the pipeline](#reproduce-it)
+**[Open the live app](https://batch-monitor.streamlit.app)** · [See profiling findings](#what-profiling-the-file-turned-up) · [How it works](#how-it-works) · [Reproduce the pipeline](#reproduce-it)
 
 | Coverage | Data integrity | Operational analysis |
 | :--- | :--- | :--- |
