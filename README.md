@@ -101,3 +101,12 @@ read-only role, and Streamlit in Snowflake.
 * Oral solid dose tablets, not biologics.
 * The source data has no specification limits, so capability indices are not calculated.
 * Not a validated system.
+
+## Data
+
+Laboratory.csv is from "Big data collection in pharmaceutical manufacturing" by
+Janja Žagar and Jurij Mihelič, published on figshare
+(https://doi.org/10.6084/m9.figshare.c.5645578) under CC BY 4.0
+(https://creativecommons.org/licenses/by/4.0/). The file is included unchanged,
+and all cleaning happens in the views. The dataset is described in Žagar and
+Mihelič, Scientific Data 9, 99 (2022), https://doi.org/10.1038/s41597-022-01203-x.
