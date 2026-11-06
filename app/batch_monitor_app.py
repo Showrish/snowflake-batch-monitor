@@ -2,6 +2,7 @@
 # Streamlit in Snowflake application over BATCH_MONITOR.CLEAN.LAB_RESULTS.
 # Python reads the data with read-only queries, then hands it to a custom HTML/CSS/JS
 # dashboard. Everything is inline because Snowflake blocks external scripts, styles and fonts.
+# The same file also runs outside Snowflake on DuckDB through local/app_duckdb.py.
 
 import html
 import json
@@ -15,8 +16,9 @@ from snowflake.snowpark.context import get_active_session
 APP_OWNER = "Showrish Reddy"
 SOURCE_VIEW = "BATCH_MONITOR.CLEAN.LAB_RESULTS"
 RAW_TABLE = "BATCH_MONITOR.RAW.LAB_RESULTS_RAW"
+LOAD_LOG = "BATCH_MONITOR.RAW.LOAD_LOG"   # written by the DuckDB build only
 MIN_BATCHES = 10        # fewer batches than this gives unreliable control limits
-FRAME_HEIGHT = 1420     # fits every view without inner scrolling at typical desktop widths
+FRAME_HEIGHT = 1480     # fits every view without inner scrolling at typical desktop widths
 
 QUALITY = [   # display name, column, decimals shown
     ("Dissolution, average", "DISSOLUTION_AV", 2),
@@ -46,7 +48,12 @@ def load_data(session):
         "WHERE TABLE_SCHEMA = 'RAW' AND TABLE_NAME = 'LAB_RESULTS_RAW'"
     ).collect()
     raw_modified = f'{modified[0]["T"]:%Y-%m-%d %H:%M} UTC' if modified else "Unavailable"
-    return df, raw_rows, raw_modified
+    try:  # the DuckDB build logs the source file's SHA-256, the Snowflake build has no such log
+        log = session.sql(f"SELECT SOURCE_SHA256 AS H FROM {LOAD_LOG} ORDER BY LOADED_AT DESC LIMIT 1").collect()
+        fingerprint = str(log[0]["H"]) if log and log[0]["H"] else None
+    except Exception:
+        fingerprint = None
+    return df, raw_rows, raw_modified, fingerprint
 
 
 def integrity_checks(df, raw_rows):
@@ -83,7 +90,7 @@ def header_html(df, checks, raw_modified, generated):
 </header>"""
 
 
-def integrity_html(df, checks):
+def integrity_html(df, checks, fingerprint=None):
     def num(v, gap=False):
         cls = " zero" if v == 0 else (" gap" if gap else "")
         return f'<td class="num{cls}">{v:,}</td>'
@@ -106,6 +113,10 @@ def integrity_html(df, checks):
     gap_sources = ", ".join(str(s) for s in gaps.loc[gaps["imp"] > 0, "API_CODE"])
     no_weight = int(df["TBL_MIN_WEIGHT"].isna().sum())
     shared_lots = int((df.groupby("API_BATCH")["API_CODE"].nunique() > 1).sum())
+    fp = ("" if not fingerprint else
+          '<div class="fp"><div class="lbl">Source file fingerprint (SHA-256)</div>'
+          f"<code>{html.escape(fingerprint)}</code>"
+          '<p class="hint">Recorded when the data was loaded. The build only accepts this exact file.</p></div>')
     return f"""
 <div class="glass panel">
   <div class="panel-head"><h2>Integrity checks</h2><p class="hint">Run on every load, against expected values fixed in advance.</p></div>
@@ -138,7 +149,7 @@ def integrity_html(df, checks):
     <div class="step"><div class="n">2</div><div class="t">Landed unchanged</div><div class="d"><code>RAW.LAB_RESULTS_RAW</code>, every column stored as text</div></div>
     <div class="step"><div class="n">3</div><div class="t">Typed and standardized</div><div class="d"><code>CLEAN.LAB_RESULTS</code> view. The raw table is never edited</div></div>
     <div class="step"><div class="n">4</div><div class="t">Reviewed here</div><div class="d">Read-only queries from this application</div></div>
-  </div>
+  </div>{fp}
 </div>"""
 
 
@@ -165,7 +176,7 @@ def payload(df):
     return json.dumps(data, separators=(",", ":")).replace("</", "<\\/")
 
 
-def build_page(df, raw_rows, raw_modified, generated):
+def build_page(df, raw_rows, raw_modified, generated, fingerprint=None):
     df = df.copy()
     df["START_MONTH"] = pd.to_datetime(df["START_MONTH"])
     df["MONTH"] = df["START_MONTH"].dt.strftime("%b %Y")
@@ -174,10 +185,12 @@ def build_page(df, raw_rows, raw_modified, generated):
     footer = (
         '<footer class="foot">Source data: Žagar J. and Mihelič J., Big data collection in pharmaceutical '
         "manufacturing and its use for product quality predictions, Scientific Data (2022), "
-        f"doi:10.1038/s41597-022-01203-x. Prepared by {html.escape(APP_OWNER)}.</footer>"
+        "doi:10.1038/s41597-022-01203-x. Dataset on figshare, doi:10.6084/m9.figshare.c.5645578, licensed "
+        '<a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>. '
+        f"Prepared by {html.escape(APP_OWNER)}.</footer>"
     )
     return (PAGE.replace("__HEADER__", header_html(df, checks, raw_modified, generated))
-                .replace("__INTEGRITY__", integrity_html(df, checks))
+                .replace("__INTEGRITY__", integrity_html(df, checks, fingerprint))
                 .replace("__FOOTER__", footer)
                 .replace("__DATA__", payload(df)))
 
@@ -323,6 +336,15 @@ details[open] summary::before{transform:rotate(45deg)}
 details p{color:var(--text-2);font-size:13px;line-height:1.7;max-width:92ch;margin:10px 0 0}
 .foot{margin:22px 4px 0;color:var(--text-3);font-size:12px;line-height:1.6;max-width:125ch}
 
+.kpi .v.warn{color:var(--warn)}
+.pill.warn{background:rgba(242,195,91,.15);color:var(--warn)}
+#t-flags .pill{white-space:nowrap}
+.tip .run{color:var(--warn);margin-top:2px}
+td .when{color:var(--text-3);font-size:12px;margin-top:2px}
+.fp{margin-top:16px;padding-top:12px;border-top:1px solid var(--line)}
+.fp code{display:block;word-break:break-all;font-size:12px;margin:2px 0 4px}
+.foot a{color:var(--text-2)}
+
 @media (max-width:1100px){.trend-grid{grid-template-columns:1fr}}
 @media (max-width:1000px){.grid-2{grid-template-columns:1fr}.meta{grid-template-columns:repeat(2,minmax(0,1fr))}
   .meta>div+div{border-left:0;padding-left:0}.flow{grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.step::after{display:none}}
@@ -357,6 +379,7 @@ __HEADER__
       <div class="legend" id="t-legend">
         <span><i class="sw" style="background:var(--accent)"></i>Within limits</span>
         <span><i class="sw" style="background:var(--signal)"></i>Beyond limits</span>
+        <span><i class="sw" style="background:var(--warn)"></i>Shift or trend</span>
         <span><i class="sw ln"></i>Mean</span>
         <span><i class="sw dl"></i>Control limit</span>
       </div>
@@ -367,7 +390,7 @@ __HEADER__
     <div class="chart" id="c-mr"></div>
     <details><summary>How the limits are calculated</summary><p>Individuals and moving range (I-MR) chart for one product
     code in production order. Control limits are the process mean ± 3σ, where σ is the average moving range divided by 1.128.
-    The moving range upper limit is 3.267 times the average moving range. A point beyond a control limit is flagged for review.
+    The moving range upper limit is 3.267 times the average moving range. A point beyond a control limit is flagged for review. Two pattern rules also flag points inside the limits: a shift, 8 or more batches in a row on the same side of the mean (a Western Electric rule), and a trend, 6 or more batches in a row steadily rising or falling (a Nelson rule).
     Control limits describe the process's own variation and are not specification limits. Heavily repeated values, such as
     results recorded at a reporting limit, make these limits unreliable, and the app flags when that applies. Every batch in
     this dataset met its specification, and the source data does not include specification limits, so capability indices are
@@ -457,10 +480,37 @@ __FOOTER__
         p.mrFlag = p.mr !== null && p.mr > s.mrUcl;
       });
       s.signals = pts.filter(function (p) { return p.flag; }).length;
+      s.runs = patterns(pts, mean);
+      s.runs.forEach(function (rn) {
+        for (var j = rn.from; j <= rn.to; j++) { pts[j].run = true; (pts[j].rules = pts[j].rules || []).push(rn.type + ": " + rn.detail); }
+      });
     }
     return s;
   }
-  window.BPM = { series: series };
+
+  /* Pattern rules for points inside the limits: a shift (Western Electric) and a trend (Nelson) */
+  function patterns(pts, mean) {
+    var found = [], n = pts.length, start = 0;
+    function side(v) { return v > mean ? 1 : v < mean ? -1 : 0; }
+    for (var i = 1; i <= n; i++) {
+      if (i < n && side(pts[i].v) !== 0 && side(pts[i].v) === side(pts[start].v)) continue;
+      var len = i - start, sd = side(pts[start].v);
+      if (sd !== 0 && len >= 8) found.push({ type: "Shift", from: start, to: i - 1,
+        detail: len + " in a row " + (sd > 0 ? "above" : "below") + " the mean" });
+      start = i;
+    }
+    var runStart = 1, runDir = 0;
+    for (var j = 1; j <= n; j++) {
+      var d = j < n ? Math.sign(pts[j].v - pts[j - 1].v) : 0;
+      if (d !== 0 && d === runDir) continue;
+      var count = j - runStart + 1;
+      if (runDir !== 0 && count >= 6) found.push({ type: "Trend", from: runStart - 1, to: j - 1,
+        detail: count + " " + (runDir > 0 ? "rising" : "falling") + " in a row" });
+      runStart = j; runDir = d;
+    }
+    return found.sort(function (a, b) { return a.from - b.from; });
+  }
+  window.BPM = { series: series, patterns: patterns };
 
   /* ---------- SVG chart ---------- */
   function niceStep(range, count) {
@@ -516,8 +566,11 @@ __FOOTER__
     }
     var r = pts.length > 120 ? 2.8 : 3.4;
     pts.forEach(function (p) {
-      svg.appendChild(el("circle", { cx: X(p.x), cy: Y(p.y), r: p.flag ? r + 1.1 : r,
-        fill: p.flag ? "#FF7A6B" : "#7CB8FF", stroke: p.flag ? "rgba(255,122,107,.35)" : "none", "stroke-width": p.flag ? 4 : 0 }));
+      var kind = p.flag ? "flag" : p.run ? "run" : "ok";
+      svg.appendChild(el("circle", { cx: X(p.x), cy: Y(p.y), r: kind === "flag" ? r + 1.1 : kind === "run" ? r + 0.6 : r,
+        fill: { flag: "#FF7A6B", run: "#F2C35B", ok: "#7CB8FF" }[kind],
+        stroke: { flag: "rgba(255,122,107,.35)", run: "rgba(242,195,91,.30)", ok: "none" }[kind],
+        "stroke-width": { flag: 4, run: 3, ok: 0 }[kind] }));
     });
 
     var guide = el("line", { y1: m.t, y2: H - m.b, stroke: "rgba(255,255,255,.18)", "stroke-dasharray": "2 3", visibility: "hidden" });
@@ -569,7 +622,8 @@ __FOOTER__
         ", so control limits can't be calculated. Identical values like this often reflect results recorded at a reporting limit.";
     } else {
       kpis($("t-kpis"), [["Batches", String(s.n)], ["Process mean", fmt(s.mean, dp)], ["Lower control limit", fmt(s.lcl, dp)],
-        ["Upper control limit", fmt(s.ucl, dp)], ["Points beyond limits", String(s.signals), s.signals ? "signal" : ""]]);
+        ["Upper control limit", fmt(s.ucl, dp)], ["Points beyond limits", String(s.signals), s.signals ? "signal" : ""],
+        ["Shifts and trends", String(s.runs.length), s.runs.length ? "warn" : ""]]);
       if (s.topShare >= 0.5) {
         banner.className = "banner warn"; banner.hidden = false;
         banner.textContent = Math.round(s.topShare * 100) + "% of these results are exactly " + fmt(s.topV, dp) +
@@ -579,14 +633,15 @@ __FOOTER__
 
     var tipI = function (p) {
       return '<div class="k">Batch ' + esc(p.batch) + '</div><div class="big">' + fmt(p.y, dp) + "</div>" +
-        '<div class="k">Started ' + esc(p.month) + "</div>" + (p.flag ? '<div class="sig">Beyond control limits</div>' : "");
+        '<div class="k">Started ' + esc(p.month) + "</div>" + (p.flag ? '<div class="sig">Beyond control limits</div>' : "") +
+        (p.rules || []).map(function (t) { return '<div class="run">' + esc(t) + "</div>"; }).join("");
     };
     var iLines = s.constant ? [] : [
       { v: s.ucl, label: "UCL " + fmt(s.ucl, dp), dash: true },
       { v: s.mean, label: "Mean " + fmt(s.mean, dp), dash: false },
       { v: s.lcl, label: "LCL " + fmt(s.lcl, dp), dash: true }];
     drawChart($("c-i"), { height: 300, aria: "Individuals chart", lines: iLines, tip: tipI, xTitle: s.constant ? "Batch sequence (production order)" : "",
-      pts: s.pts.map(function (p) { return { x: p.x, y: p.v, batch: p.batch, month: p.month, flag: !!p.flag }; }) });
+      pts: s.pts.map(function (p) { return { x: p.x, y: p.v, batch: p.batch, month: p.month, flag: !!p.flag, run: !!p.run, rules: p.rules }; }) });
 
     if (s.constant) {
       $("c-mr").innerHTML = '<p class="empty">Every change from the previous batch is zero.</p>';
@@ -600,20 +655,28 @@ __FOOTER__
         pts: s.pts.slice(1).map(function (p) { return { x: p.x, y: p.mr, batch: p.batch, month: p.month, flag: p.mrFlag }; }) });
     }
 
-    var flags = $("t-flags"), head = '<div class="panel-head"><h2>Beyond control limits' +
-      (s.signals ? '<span class="count">' + s.signals + "</span>" : "") + '</h2><p class="hint">' +
-      (s.constant ? "Not applicable for this selection." : s.signals ? "Worth a look, even though every batch met specification."
-        : "No batch falls outside the control limits.") + "</p></div>";
-    if (s.constant || !s.signals) {
+    var items = s.constant ? [] : s.pts.filter(function (p) { return p.flag; }).map(function (p) {
+      var z = (p.v - s.mean) / s.sigma;
+      return { at: p.x, rule: "Beyond 3σ", cls: "fail", batches: esc(p.batch), when: esc(p.month),
+        detail: fmt(p.v, dp) + " (" + (z > 0 ? "+" : "−") + Math.abs(z).toFixed(2) + "σ)" };
+    }).concat((s.runs || []).map(function (rn) {
+      var a = s.pts[rn.from], b = s.pts[rn.to];
+      return { at: a.x, rule: rn.type, cls: "warn", batches: esc(a.batch) + " to " + esc(b.batch),
+        when: a.month === b.month ? esc(a.month) : esc(a.month) + " to " + esc(b.month), detail: rn.detail };
+    })).sort(function (a, b) { return a.at - b.at; });
+    var flags = $("t-flags"), head = '<div class="panel-head"><h2>Signals for review' +
+      (items.length ? '<span class="count">' + items.length + "</span>" : "") + '</h2><p class="hint">' +
+      (s.constant ? "Not applicable for this selection." : items.length ? "Worth a look, even though every batch met specification."
+        : "No points beyond the limits, and no shifts or trends.") + "</p></div>";
+    if (!items.length) {
       flags.innerHTML = head;
     } else {
-      var rows = s.pts.filter(function (p) { return p.flag; }).map(function (p) {
-        var z = (p.v - s.mean) / s.sigma;
-        return "<tr><td>" + esc(p.batch) + "</td><td>" + esc(p.month) + '</td><td class="num">' + fmt(p.v, dp) +
-          '</td><td class="num hot">' + (z > 0 ? "+" : "−") + Math.abs(z).toFixed(2) + "σ</td></tr>";
+      var rows = items.map(function (it) {
+        return "<tr><td>" + it.batches + '<div class="when">' + it.when + '</div></td><td><span class="pill ' + it.cls + '">' +
+          esc(it.rule) + "</span></td><td>" + esc(it.detail) + "</td></tr>";
       }).join("");
-      flags.innerHTML = head + '<div class="tbl-wrap" id="t-flag-wrap"><table><thead><tr><th>Batch</th><th>Month</th>' +
-        '<th class="num">Value</th><th class="num">From mean</th></tr></thead><tbody>' + rows + "</tbody></table></div>";
+      flags.innerHTML = head + '<div class="tbl-wrap" id="t-flag-wrap"><table><thead><tr><th>Batches</th><th>Rule</th>' +
+        "<th>Detail</th></tr></thead><tbody>" + rows + "</tbody></table></div>";
     }
     sizeFlags();
   }
@@ -693,9 +756,9 @@ st.markdown(
 )
 
 session = get_active_session()
-data, raw_count, raw_modified_at = load_data(session)
+data, raw_count, raw_modified_at, source_fingerprint = load_data(session)
 components.html(
-    build_page(data, raw_count, raw_modified_at, datetime.now(timezone.utc)),
+    build_page(data, raw_count, raw_modified_at, datetime.now(timezone.utc), source_fingerprint),
     height=FRAME_HEIGHT,
     scrolling=True,
 )

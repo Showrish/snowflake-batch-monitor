@@ -14,6 +14,7 @@ Usage:
     python local/build_duckdb.py path/to/Laboratory.csv
 """
 import csv
+import hashlib
 import os
 import shutil
 import sys
@@ -26,6 +27,10 @@ REPO = Path(__file__).resolve().parent.parent
 DB_NAME = "batch_monitor.duckdb"  # the file name becomes the catalog name BATCH_MONITOR
 DB_PATH = REPO / DB_NAME
 SCRATCH = REPO / ".build_tmp"
+
+# SHA-256 of the verified Laboratory.csv. When set, the build refuses any other file.
+# Leave it empty to record the fingerprint without enforcing it.
+EXPECTED_SHA256 = "a3b0f16c7c3fa8052b38d767e38fda731a751acc4ec139b52d01577b32dc6483"
 
 EXPECTED_COLUMNS = 55
 EXPECTED_MEASUREMENTS = 45
@@ -52,6 +57,14 @@ def find_csv():
         sys.exit(f"Can't find {path}. Download Laboratory.csv from figshare and put it "
                  "in the repo root, or pass its path.")
     return path.resolve()
+
+
+def sha256_of(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def read_header(csv_path):
@@ -171,8 +184,16 @@ def run_checks(con, header):
 
 def main():
     csv_path = find_csv()
+    fingerprint = sha256_of(csv_path)
+    print(f"Source: {csv_path.name}, SHA-256 {fingerprint}")
+    if EXPECTED_SHA256 and fingerprint != EXPECTED_SHA256:
+        sys.exit("This file doesn't match the verified fingerprint. "
+                 "Stopping before anything is built.")
+    print("Fingerprint matches the verified file" if EXPECTED_SHA256
+          else "Fingerprint recorded (not pinned yet)")
+
     header = read_header(csv_path)
-    print(f"Source: {csv_path.name}, {len(header)} columns")
+    print(f"Columns: {len(header)}")
     if len(header) != EXPECTED_COLUMNS:
         sys.exit(f"Expected {EXPECTED_COLUMNS} columns, found {len(header)}. "
                  "Stopping before anything is built.")
@@ -195,11 +216,13 @@ def main():
         con.execute(raw_table_sql(header, reader))
         loaded = con.execute("SELECT COUNT(*) FROM raw.lab_results_raw").fetchone()[0]
 
-        # DuckDB has no LAST_ALTERED, so the load time is logged for the app's header
-        con.execute("CREATE TABLE raw.load_log "
-                    "(loaded_at TIMESTAMP, source_file VARCHAR, row_count BIGINT)")
-        con.execute("INSERT INTO raw.load_log VALUES (?, ?, ?)",
-                    [datetime.now(timezone.utc).replace(tzinfo=None), csv_path.name, loaded])
+        # DuckDB has no LAST_ALTERED, so the load time is logged for the app's header,
+        # along with the source file's fingerprint
+        con.execute("CREATE TABLE raw.load_log (loaded_at TIMESTAMP, source_file VARCHAR, "
+                    "row_count BIGINT, source_sha256 VARCHAR)")
+        con.execute("INSERT INTO raw.load_log VALUES (?, ?, ?, ?)",
+                    [datetime.now(timezone.utc).replace(tzinfo=None), csv_path.name, loaded,
+                     fingerprint])
 
         con.execute(clean_view_sql(header))
         results = run_checks(con, header)
