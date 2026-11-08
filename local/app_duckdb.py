@@ -3,8 +3,9 @@
 app/batch_monitor_app.py stays exactly as it ran in Streamlit in Snowflake.
 This launcher registers a stand-in for snowflake.snowpark.context, so the app's
 own import line gets the DuckDB session from local_session.py, then runs the
-app file unchanged. If the database isn't built yet (for example on a fresh
-deploy), it first runs the same build and checks as local/build_duckdb.py.
+app file unchanged. If the database is missing or older than the build script or
+Laboratory.csv (for example after a fresh deploy or a push), it first reruns the same
+build and checks as local/build_duckdb.py.
 
 Usage:
     python local/build_duckdb.py      (optional, the launcher builds if needed)
@@ -19,16 +20,28 @@ import streamlit as st
 
 import local_session
 
-APP = Path(__file__).resolve().parent.parent / "app" / "batch_monitor_app.py"
+REPO = Path(__file__).resolve().parent.parent
+APP = REPO / "app" / "batch_monitor_app.py"
+INPUTS = [Path(__file__).with_name("build_duckdb.py"), REPO / "Laboratory.csv"]
 
 
-@st.cache_resource(show_spinner=False)
+def database_is_stale():
+    db = local_session.DB_PATH
+    if not db.exists():
+        return True
+    built = db.stat().st_mtime
+    return any(p.exists() and p.stat().st_mtime > built for p in INPUTS)
+
+
 def ensure_database():
-    """Build the database once per server start if it's missing."""
-    if not local_session.DB_PATH.exists():
-        import build_duckdb
-        build_duckdb.main()  # same load and checks as running it by hand
-    return True
+    """Rebuild when the database is missing or older than its inputs."""
+    if not database_is_stale():
+        return
+    with local_session.BUILD_LOCK:
+        if database_is_stale():  # another session may have rebuilt it while we waited
+            import build_duckdb
+            build_duckdb.main()  # same load and checks as running it by hand
+            local_session.reset()
 
 
 try:

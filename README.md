@@ -39,7 +39,7 @@ flowchart LR
     C -.-> K
 ```
 
-The raw table is never edited, so what the app shows can always be traced back to the original file. All cleaning happens in one view. Each step is checked against values written down in advance, and the app re-runs four integrity checks every time it loads.
+The raw table is never edited, so what the app shows can always be traced back to the original file. All cleaning happens in one view. Each step is checked against values written down in advance, and the app re-runs six integrity checks every time it loads.
 
 ### In Snowflake (original)
 
@@ -89,10 +89,10 @@ These checks verify the data. The app is not a validated system in the GMP sense
 
 ![Data integrity](screenshots/data_integrity.png)
 
-* **Data integrity:** record count reconciliation, batch ID uniqueness, date and label conversion,
-  missing results by API source, observations, data lineage, and the source file's SHA-256 fingerprint.
+* **Data integrity:** source record count, record count reconciliation, batch ID presence and uniqueness, date and label conversion,
+  missing results by API source, observations, data lineage, the source file's SHA-256 fingerprint, and the last build's check results.
 * **Process trending:** an individuals and moving range (I-MR) chart per product code and quality attribute,
-  in production order. Points beyond the control limits are flagged, and two pattern rules flag points inside them:
+  in production order. Points beyond either chart's control limits are flagged, including unusually large jumps between consecutive batches, and two pattern rules flag points inside them:
   a **shift**, 8 or more batches in a row on one side of the mean (a Western Electric rule), and a **trend**,
   6 or more batches in a row steadily rising or falling (a Nelson rule). Limits are the mean ± 3σ, with σ estimated
   as the average moving range divided by 1.128. Control limits are not specification limits, and every batch met
@@ -124,6 +124,10 @@ The file's SHA-256 is `a3b0f16c7c3fa8052b38d767e38fda731a751acc4ec139b52d01577b3
 Warehouses, stages, file formats, `COPY INTO` with validation mode, views, zero-copy cloning, Time Travel
 (`BEFORE (STATEMENT => ...)` and `UNDROP`), a Data Metric Function for automatic duplicate checks, a
 read-only role, and Streamlit in Snowflake.
+
+## Permissions
+
+The app only runs SELECT queries. In Snowflake, though, a Streamlit app runs with its owner's role, so there it was read-only by design rather than enforced. `BATCH_READER`, the read-only role in `sql/04_exercises.sql`, was a separate exercise. It can only read the clean view, while the app also reads the raw table and its metadata. The DuckDB version opens the database read-only, so there it is enforced.
 
 ## Reproduce it
 
@@ -170,3 +174,7 @@ the database on its own if it's missing.
 * Control limits come from each product code's full history, so they describe that history, not a live process.
 * The live app runs on DuckDB. The Snowflake-only exercises in `sql/04` aren't ported.
 * Not a validated system.
+
+## License
+
+The code is under the [MIT License](LICENSE). `Laboratory.csv` keeps its own CC BY 4.0 license, described under Data.

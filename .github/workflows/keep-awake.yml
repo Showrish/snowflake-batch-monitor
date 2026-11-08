@@ -1,8 +1,9 @@
 name: Keep app awake
 
 # Streamlit Community Cloud puts apps to sleep after a stretch with no visitors.
-# This opens the live app in a headless browser every 4 hours, like a real visit,
-# and clicks the wake button if the app has already gone to sleep.
+# Every 4 hours this opens the live app in a headless browser, like a real visit,
+# wakes it if it has gone to sleep, and fails if the dashboard doesn't render,
+# so a broken app shows up as a failed run.
 
 on:
   schedule:
@@ -20,38 +21,55 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install a headless browser
+      - name: Install Playwright
         timeout-minutes: 6
-        run: |
-          pip install playwright
+        run: pip install playwright
 
-      - name: Visit the app and wake it if needed
-        timeout-minutes: 4
+      - name: Visit the app and check the dashboard renders
+        timeout-minutes: 5
         run: |
           python - <<'PY'
-          import os
+          import os, sys, time
           from playwright.sync_api import sync_playwright
 
           url = os.environ["APP_URL"]
+          TITLE = "Batch performance monitor"
+
+          def dashboard_found(page):
+              for frame in page.frames:  # the dashboard sits inside nested frames
+                  try:
+                      if frame.get_by_text(TITLE).count():
+                          return True
+                  except Exception:
+                      pass
+              return False
+
           with sync_playwright() as p:
-              browser = p.chromium.launch(channel="chrome")
+              browser = p.chromium.launch(channel="chrome")  # Chrome comes preinstalled on the runner
               page = browser.new_page()
               page.goto(url, wait_until="domcontentloaded", timeout=60_000)
               page.wait_for_timeout(8_000)
 
-              woke = False
-              for frame in page.frames:  # the button can sit inside a frame
-                  button = frame.get_by_role("button", name="Yes, get this app back up!")
-                  if button.count():
-                      button.first.click()
-                      woke = True
-                      break
+              for frame in page.frames:
+                  try:
+                      button = frame.get_by_role("button", name="Yes, get this app back up!")
+                      if button.count():
+                          button.first.click()
+                          print("App was asleep. Clicked the wake button.")
+                          break
+                  except Exception:
+                      pass
 
-              if woke:
-                  print("App was asleep. Clicked the wake button.")
-                  page.wait_for_timeout(90_000)  # give it time to start
+              deadline = time.time() + 150
+              while time.time() < deadline and not dashboard_found(page):
+                  page.wait_for_timeout(5_000)
+
+              ok = dashboard_found(page)
+              if ok:
+                  print("Dashboard rendered.")
+                  page.wait_for_timeout(15_000)  # stay long enough to count as a visit
               else:
-                  print("App was already awake.")
-                  page.wait_for_timeout(20_000)  # stay long enough to count as a visit
+                  print("Dashboard did not render within 150 seconds.")
               browser.close()
+              sys.exit(0 if ok else 1)
           PY

@@ -219,13 +219,15 @@ def main():
         # DuckDB has no LAST_ALTERED, so the load time is logged for the app's header,
         # along with the source file's fingerprint
         con.execute("CREATE TABLE raw.load_log (loaded_at TIMESTAMP, source_file VARCHAR, "
-                    "row_count BIGINT, source_sha256 VARCHAR)")
-        con.execute("INSERT INTO raw.load_log VALUES (?, ?, ?, ?)",
+                    "row_count BIGINT, source_sha256 VARCHAR, checks_passed INTEGER, checks_total INTEGER)")
+        con.execute("INSERT INTO raw.load_log VALUES (?, ?, ?, ?, NULL, NULL)",
                     [datetime.now(timezone.utc).replace(tzinfo=None), csv_path.name, loaded,
                      fingerprint])
 
         con.execute(clean_view_sql(header))
         results = run_checks(con, header)
+        con.execute("UPDATE raw.load_log SET checks_passed = ?, checks_total = ?",
+                    [sum(results), len(results)])
         con.execute("CHECKPOINT")
     except duckdb.Error as e:
         print(f"Build stopped: {e}")

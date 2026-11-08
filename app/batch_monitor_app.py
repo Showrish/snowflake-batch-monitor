@@ -17,6 +17,7 @@ APP_OWNER = "Showrish Reddy"
 SOURCE_VIEW = "BATCH_MONITOR.CLEAN.LAB_RESULTS"
 RAW_TABLE = "BATCH_MONITOR.RAW.LAB_RESULTS_RAW"
 LOAD_LOG = "BATCH_MONITOR.RAW.LOAD_LOG"   # written by the DuckDB build only
+EXPECTED_SOURCE_ROWS = 1005               # batches in the published Laboratory.csv
 MIN_BATCHES = 10        # fewer batches than this gives unreliable control limits
 FRAME_HEIGHT = 1480     # fits every view without inner scrolling at typical desktop widths
 
@@ -48,18 +49,23 @@ def load_data(session):
         "WHERE TABLE_SCHEMA = 'RAW' AND TABLE_NAME = 'LAB_RESULTS_RAW'"
     ).collect()
     raw_modified = f'{modified[0]["T"]:%Y-%m-%d %H:%M} UTC' if modified else "Unavailable"
-    try:  # the DuckDB build logs the source file's SHA-256, the Snowflake build has no such log
-        log = session.sql(f"SELECT SOURCE_SHA256 AS H FROM {LOAD_LOG} ORDER BY LOADED_AT DESC LIMIT 1").collect()
-        fingerprint = str(log[0]["H"]) if log and log[0]["H"] else None
+    try:  # the DuckDB build logs the file's SHA-256 and its own check results, the Snowflake build has no such log
+        log = session.sql(f"SELECT SOURCE_SHA256 AS H, CHECKS_PASSED AS P, CHECKS_TOTAL AS N, LOADED_AT AS T "
+                          f"FROM {LOAD_LOG} ORDER BY LOADED_AT DESC LIMIT 1").collect()
+        build = ({"sha256": str(log[0]["H"]), "passed": int(log[0]["P"]), "total": int(log[0]["N"]),
+                  "at": f'{log[0]["T"]:%Y-%m-%d %H:%M} UTC'} if log else None)
     except Exception:
-        fingerprint = None
-    return df, raw_rows, raw_modified, fingerprint
+        build = None
+    return df, raw_rows, raw_modified, build
 
 
 def integrity_checks(df, raw_rows):
     """Each check has an expected value fixed in advance."""
+    blank_ids = int(df["BATCH"].isna().sum() + df["BATCH"].fillna("x").astype(str).str.strip().eq("").sum())
     checks = [
+        ("Source record count", "The raw table holds every batch in the published file", EXPECTED_SOURCE_ROWS, raw_rows),
         ("Record count reconciliation", "Every raw record reaches the clean view", raw_rows, len(df)),
+        ("Batch ID present", "Every record has a batch ID", 0, blank_ids),
         ("Batch ID uniqueness", "No batch ID appears more than once", 0, int(df["BATCH"].duplicated().sum())),
         ("Start month conversion", "Every month label converts to a date", 0, int(df["START_MONTH"].isna().sum())),
         ("Strength label mapping", "Every strength label maps to a standard value", 0, int(df["STRENGTH"].isna().sum())),
@@ -90,7 +96,7 @@ def header_html(df, checks, raw_modified, generated):
 </header>"""
 
 
-def integrity_html(df, checks, fingerprint=None):
+def integrity_html(df, checks, build=None):
     def num(v, gap=False):
         cls = " zero" if v == 0 else (" gap" if gap else "")
         return f'<td class="num{cls}">{v:,}</td>'
@@ -113,9 +119,12 @@ def integrity_html(df, checks, fingerprint=None):
     gap_sources = ", ".join(str(s) for s in gaps.loc[gaps["imp"] > 0, "API_CODE"])
     no_weight = int(df["TBL_MIN_WEIGHT"].isna().sum())
     shared_lots = int((df.groupby("API_BATCH")["API_CODE"].nunique() > 1).sum())
-    fp = ("" if not fingerprint else
+    build_line = ("" if not build else
+                  f'<p class="hint build-line">Last build: {build["passed"]} of {build["total"]} build checks passed, '
+                  f'{html.escape(build["at"])}. A build only replaces the database if every check passes.</p>')
+    fp = ("" if not build else
           '<div class="fp"><div class="lbl">Source file fingerprint (SHA-256)</div>'
-          f"<code>{html.escape(fingerprint)}</code>"
+          f"<code>{html.escape(build['sha256'])}</code>"
           '<p class="hint">Recorded when the data was loaded. The build only accepts this exact file.</p></div>')
     return f"""
 <div class="glass panel">
@@ -123,7 +132,7 @@ def integrity_html(df, checks, fingerprint=None):
   <div class="tbl-wrap"><table>
     <thead><tr><th>Check</th><th>What it verifies</th><th class="num">Expected</th><th class="num">Observed</th><th>Result</th></tr></thead>
     <tbody>{check_rows}</tbody>
-  </table></div>
+  </table></div>{build_line}
 </div>
 <div class="grid-2">
   <div class="glass panel">
@@ -176,7 +185,7 @@ def payload(df):
     return json.dumps(data, separators=(",", ":")).replace("</", "<\\/")
 
 
-def build_page(df, raw_rows, raw_modified, generated, fingerprint=None):
+def build_page(df, raw_rows, raw_modified, generated, build=None):
     df = df.copy()
     df["START_MONTH"] = pd.to_datetime(df["START_MONTH"])
     df["MONTH"] = df["START_MONTH"].dt.strftime("%b %Y")
@@ -190,7 +199,7 @@ def build_page(df, raw_rows, raw_modified, generated, fingerprint=None):
         f"Prepared by {html.escape(APP_OWNER)}.</footer>"
     )
     return (PAGE.replace("__HEADER__", header_html(df, checks, raw_modified, generated))
-                .replace("__INTEGRITY__", integrity_html(df, checks, fingerprint))
+                .replace("__INTEGRITY__", integrity_html(df, checks, build))
                 .replace("__FOOTER__", footer)
                 .replace("__DATA__", payload(df)))
 
@@ -339,6 +348,7 @@ details p{color:var(--text-2);font-size:13px;line-height:1.7;max-width:92ch;marg
 .kpi .v.warn{color:var(--warn)}
 .pill.warn{background:rgba(242,195,91,.15);color:var(--warn)}
 #t-flags .pill{white-space:nowrap}
+.build-line{margin-top:12px}
 .tip .run{color:var(--warn);margin-top:2px}
 td .when{color:var(--text-3);font-size:12px;margin-top:2px}
 .fp{margin-top:16px;padding-top:12px;border-top:1px solid var(--line)}
@@ -480,6 +490,7 @@ __FOOTER__
         p.mrFlag = p.mr !== null && p.mr > s.mrUcl;
       });
       s.signals = pts.filter(function (p) { return p.flag; }).length;
+      s.mrSignals = pts.filter(function (p) { return p.mrFlag; }).length;
       s.runs = patterns(pts, mean);
       s.runs.forEach(function (rn) {
         for (var j = rn.from; j <= rn.to; j++) { pts[j].run = true; (pts[j].rules = pts[j].rules || []).push(rn.type + ": " + rn.detail); }
@@ -623,6 +634,7 @@ __FOOTER__
     } else {
       kpis($("t-kpis"), [["Batches", String(s.n)], ["Process mean", fmt(s.mean, dp)], ["Lower control limit", fmt(s.lcl, dp)],
         ["Upper control limit", fmt(s.ucl, dp)], ["Points beyond limits", String(s.signals), s.signals ? "signal" : ""],
+        ["Moving range signals", String(s.mrSignals), s.mrSignals ? "signal" : ""],
         ["Shifts and trends", String(s.runs.length), s.runs.length ? "warn" : ""]]);
       if (s.topShare >= 0.5) {
         banner.className = "banner warn"; banner.hidden = false;
@@ -655,11 +667,17 @@ __FOOTER__
         pts: s.pts.slice(1).map(function (p) { return { x: p.x, y: p.mr, batch: p.batch, month: p.month, flag: p.mrFlag }; }) });
     }
 
+    var mrItems = s.constant ? [] : s.pts.map(function (p, i) { return { p: p, prev: s.pts[i - 1] }; })
+      .filter(function (o) { return o.p.mrFlag && o.prev; }).map(function (o) {
+        return { at: o.p.x, rule: "Moving range", cls: "fail", batches: esc(o.prev.batch) + " to " + esc(o.p.batch),
+          when: o.prev.month === o.p.month ? esc(o.p.month) : esc(o.prev.month) + " to " + esc(o.p.month),
+          detail: "Jump of " + fmt(o.p.mr, dp) + " (limit " + fmt(s.mrUcl, dp) + ")" };
+      });
     var items = s.constant ? [] : s.pts.filter(function (p) { return p.flag; }).map(function (p) {
       var z = (p.v - s.mean) / s.sigma;
       return { at: p.x, rule: "Beyond 3σ", cls: "fail", batches: esc(p.batch), when: esc(p.month),
         detail: fmt(p.v, dp) + " (" + (z > 0 ? "+" : "−") + Math.abs(z).toFixed(2) + "σ)" };
-    }).concat((s.runs || []).map(function (rn) {
+    }).concat(mrItems).concat((s.runs || []).map(function (rn) {
       var a = s.pts[rn.from], b = s.pts[rn.to];
       return { at: a.x, rule: rn.type, cls: "warn", batches: esc(a.batch) + " to " + esc(b.batch),
         when: a.month === b.month ? esc(a.month) : esc(a.month) + " to " + esc(b.month), detail: rn.detail };
@@ -667,7 +685,7 @@ __FOOTER__
     var flags = $("t-flags"), head = '<div class="panel-head"><h2>Signals for review' +
       (items.length ? '<span class="count">' + items.length + "</span>" : "") + '</h2><p class="hint">' +
       (s.constant ? "Not applicable for this selection." : items.length ? "Worth a look, even though every batch met specification."
-        : "No points beyond the limits, and no shifts or trends.") + "</p></div>";
+        : "No points beyond the limits, no large jumps, and no shifts or trends.") + "</p></div>";
     if (!items.length) {
       flags.innerHTML = head;
     } else {
@@ -745,7 +763,7 @@ __FOOTER__
 
 
 # ---------- Streamlit page: a full-width frame on a matching background
-st.set_page_config(layout="wide")
+st.set_page_config(page_title="Batch Monitor", page_icon="💊", layout="wide")
 st.markdown(
     "<style>"
     ".stApp,[data-testid='stAppViewContainer']{background:#0A0E17}"
@@ -756,9 +774,9 @@ st.markdown(
 )
 
 session = get_active_session()
-data, raw_count, raw_modified_at, source_fingerprint = load_data(session)
+data, raw_count, raw_modified_at, build_info = load_data(session)
 components.html(
-    build_page(data, raw_count, raw_modified_at, datetime.now(timezone.utc), source_fingerprint),
+    build_page(data, raw_count, raw_modified_at, datetime.now(timezone.utc), build_info),
     height=FRAME_HEIGHT,
     scrolling=True,
 )

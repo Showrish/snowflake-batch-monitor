@@ -7,6 +7,7 @@ the same calls the app already makes: session.sql(query).to_pandas() and .collec
 The database is opened read-only, the local version of the read-only role.
 """
 import os
+import threading
 from pathlib import Path
 
 import duckdb
@@ -88,6 +89,18 @@ class LocalSession:
 
 
 _session = None
+BUILD_LOCK = threading.Lock()  # lives here so it survives Streamlit reruns of the launcher
+
+
+def reset():
+    """Close the open connection so the next query reads a freshly built database."""
+    global _session
+    if _session is not None:
+        try:
+            _session._con.close()
+        except Exception:
+            pass
+    _session = None
 
 
 def get_active_session():
