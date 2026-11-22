@@ -1,0 +1,31 @@
+name: Tests
+
+# Runs on every push to main and every pull request. Covers the control chart rules,
+# limits, frozen limits and capability in a real browser, the per-batch signals and
+# the page's controls, and the DuckDB build, including a tampered source file that
+# has to be refused before anything is built.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install the pinned packages
+        timeout-minutes: 6
+        run: pip install -r local/requirements.txt -r tests/requirements.txt
+
+      - name: Run the tests
+        timeout-minutes: 8
+        run: python -m pytest tests -v

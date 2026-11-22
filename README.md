@@ -167,13 +167,15 @@ the database on its own if it's missing.
 | .github/workflows/health-check.yml | Monthly rebuild with every check, logged to ops/health-log.md |
 | ops/health-log.md | One dated line per monthly health check |
 | [`screenshots/`](screenshots/) | Dashboard examples |
+| tests/ | Browser tests for the chart rules, limits, capability and controls, plus build tests including a tampered file |
+| .github/workflows/tests.yml | Runs the tests on every push and pull request |
 
 ## Limitations
 
 * Public, anonymized data. Batch and lot IDs are codes, not real identifiers.
 * Oral solid dose tablets, not biologics.
-* The source data has no specification limits, so capability indices are not calculated.
-* Control limits come from each product code's full history, so they describe that history, not a live process.
+* The source data has no specification limits, so none are filled in. Entering them on the Process trending tab gives Cpk and Ppk.
+* By default, control limits come from each product code's full history, which describes that history rather than a live process. The "First 20 batches, then frozen" option sets them from each code's first 20 batches and judges every later batch against them.
 * The live app runs on DuckDB. The Snowflake-only exercises in `sql/04` aren't ported.
 * Not a validated system.
 

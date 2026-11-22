@@ -19,6 +19,7 @@ RAW_TABLE = "BATCH_MONITOR.RAW.LAB_RESULTS_RAW"
 LOAD_LOG = "BATCH_MONITOR.RAW.LOAD_LOG"   # written by the DuckDB build only
 EXPECTED_SOURCE_ROWS = 1005               # batches in the published Laboratory.csv
 MIN_BATCHES = 10        # fewer batches than this gives unreliable control limits
+BASELINE_BATCHES = 20   # with frozen limits, each code's first 20 batches set them
 FRAME_HEIGHT = 1480     # fits every view without inner scrolling at typical desktop widths
 
 QUALITY = [   # display name, column, decimals shown
@@ -181,6 +182,8 @@ def payload(df):
         "codes": [[str(c), int(n)] for c, n in counts.items() if n >= MIN_BATCHES],
         "attrs": [list(a) for a in QUALITY],
         "materials": [list(m) for m in MATERIALS],
+        "baseline": BASELINE_BATCHES,
+        "minBatches": MIN_BATCHES,
     }
     return json.dumps(data, separators=(",", ":")).replace("</", "<\\/")
 
@@ -201,6 +204,7 @@ def build_page(df, raw_rows, raw_modified, generated, build=None):
     return (PAGE.replace("__HEADER__", header_html(df, checks, raw_modified, generated))
                 .replace("__INTEGRITY__", integrity_html(df, checks, build))
                 .replace("__FOOTER__", footer)
+                .replace("__BASELINE__", str(BASELINE_BATCHES))
                 .replace("__DATA__", payload(df)))
 
 
@@ -355,6 +359,22 @@ td .when{color:var(--text-3);font-size:12px;margin-top:2px}
 .fp code{display:block;word-break:break-all;font-size:12px;margin:2px 0 4px}
 .foot a{color:var(--text-2)}
 
+input[type=number]{appearance:none;-moz-appearance:textfield;font:inherit;color:var(--text);width:150px;
+  background:rgba(255,255,255,.045);border:1px solid var(--line-2);border-radius:10px;padding:9px 12px}
+input[type=number]:hover{border-color:rgba(255,255,255,.25)}
+input[type=number]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+input[type=number]::-webkit-outer-spin-button,input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+input::placeholder{color:var(--text-3)}
+.cap{margin:12px 0 0;font-size:13px;color:var(--text-2)}
+.cap b{color:var(--text);font-weight:600;font-variant-numeric:tabular-nums}
+.cap.err{color:var(--signal)}
+.legend span[hidden]{display:none}
+.sw.sl{width:16px;height:0;border-radius:0;border-top:1.5px solid var(--warn)}
+.sw.vl{width:0;height:12px;border-radius:0;border-left:1.5px dashed var(--accent)}
+span.muted{color:var(--text-3)}
+#l-table .pill{white-space:nowrap}
+td .why{color:var(--text-3);font-size:12px;margin-top:2px}
+
 @media (max-width:1100px){.trend-grid{grid-template-columns:1fr}}
 @media (max-width:1000px){.grid-2{grid-template-columns:1fr}.meta{grid-template-columns:repeat(2,minmax(0,1fr))}
   .meta>div+div{border-left:0;padding-left:0}.flow{grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.step::after{display:none}}
@@ -378,7 +398,11 @@ __HEADER__
     <div class="controls">
       <div class="field"><label for="f-code">Product code</label><select id="f-code"></select></div>
       <div class="field"><label for="f-attr">Quality attribute</label><select id="f-attr"></select></div>
+      <div class="field"><label for="f-mode">Control limits from</label><select id="f-mode"></select></div>
+      <div class="field"><label for="f-lsl">Lower spec limit</label><input id="f-lsl" type="number" step="any" placeholder="None"></div>
+      <div class="field"><label for="f-usl">Upper spec limit</label><input id="f-usl" type="number" step="any" placeholder="None"></div>
     </div>
+    <p class="cap" id="t-cap"></p>
     <div class="kpis" id="t-kpis"></div>
   </div>
   <div id="t-banner" hidden></div>
@@ -392,6 +416,8 @@ __HEADER__
         <span><i class="sw" style="background:var(--warn)"></i>Shift or trend</span>
         <span><i class="sw ln"></i>Mean</span>
         <span><i class="sw dl"></i>Control limit</span>
+        <span id="t-leg-spec" hidden><i class="sw sl"></i>Spec limit</span>
+        <span id="t-leg-base" hidden><i class="sw vl"></i>Limits frozen</span>
       </div>
     </div>
     <div class="chart" id="c-i"></div>
@@ -400,11 +426,14 @@ __HEADER__
     <div class="chart" id="c-mr"></div>
     <details><summary>How the limits are calculated</summary><p>Individuals and moving range (I-MR) chart for one product
     code in production order. Control limits are the process mean ± 3σ, where σ is the average moving range divided by 1.128.
-    The moving range upper limit is 3.267 times the average moving range. A point beyond a control limit is flagged for review. Two pattern rules also flag points inside the limits: a shift, 8 or more batches in a row on the same side of the mean (a Western Electric rule), and a trend, 6 or more batches in a row steadily rising or falling (a Nelson rule).
+    The moving range upper limit is 3.267 times the average moving range. By default the limits come from every batch shown,
+    a retrospective review. With "First __BASELINE__ batches, then frozen", they come from each code's first __BASELINE__ batches
+    only, and every later batch is judged against those fixed limits, the way a plant monitors new batches. A point beyond a control limit is flagged for review. Two pattern rules also flag points inside the limits: a shift, 8 or more batches in a row on the same side of the mean (a Western Electric rule), and a trend, 6 or more batches in a row steadily rising or falling (a Nelson rule).
     Control limits describe the process's own variation and are not specification limits. Heavily repeated values, such as
     results recorded at a reporting limit, make these limits unreliable, and the app flags when that applies. Every batch in
-    this dataset met its specification, and the source data does not include specification limits, so capability indices are
-    not calculated.</p></details>
+    this dataset met its specification, but the source data doesn't include the specification limits themselves. Entering
+    limits above the charts gives Cpk, which uses the short-term σ, and Ppk, which uses the overall standard deviation, both
+    over every batch shown.</p></details>
   </div>
   <div class="glass panel flags" id="t-flags"></div>
   </div>
@@ -415,6 +444,7 @@ __HEADER__
     <div class="controls">
       <div class="field"><label for="f-mat">Material</label><select id="f-mat"></select></div>
       <div class="field"><label for="f-lot">Lot</label><select id="f-lot"></select></div>
+      <div class="field"><label for="f-show">Show</label><select id="f-show"><option value="all">All batches</option><option value="sig">Only batches with signals</option></select></div>
     </div>
     <div class="kpis" id="l-kpis"></div>
   </div>
@@ -464,22 +494,23 @@ __FOOTER__
   });
 
   /* ---------- I-MR statistics ---------- */
-  function series(code, key) {
+  /* With base > 0 the limits come from a code's first `base` batches only and stay fixed, the way
+     a plant judges new batches. Without it they come from every batch, a retrospective review. */
+  function series(code, key, base) {
     var k = I[key];
     var pts = R.filter(function (r) { return r[I.PRODUCT_CODE] === code && r[k] !== null; })
       .sort(function (a, b) { return a[I.BATCH_SEQ] - b[I.BATCH_SEQ]; })
       .map(function (r, i) { return { x: i + 1, v: r[k], batch: r[I.BATCH], month: r[I.MONTH] }; });
-    var n = pts.length, sum = 0, mrSum = 0;
-    pts.forEach(function (p, i) {
-      sum += p.v;
-      p.mr = i === 0 ? null : Math.abs(p.v - pts[i - 1].v);
-      if (i > 0) mrSum += p.mr;
-    });
-    var mean = sum / n, mrBar = n > 1 ? mrSum / (n - 1) : 0;
+    var n = pts.length;
+    pts.forEach(function (p, i) { p.mr = i === 0 ? null : Math.abs(p.v - pts[i - 1].v); });
+    var m = base > 0 && base < n ? base : n, sum = 0, mrSum = 0;   // the m batches that set the limits
+    for (var i = 0; i < m; i++) { sum += pts[i].v; if (i > 0) mrSum += pts[i].mr; }
+    var mean = sum / m, mrBar = m > 1 ? mrSum / (m - 1) : 0;
     var counts = new Map(), topV = null, topC = 0;
     pts.forEach(function (p) { counts.set(p.v, (counts.get(p.v) || 0) + 1); });
     counts.forEach(function (c, v) { if (c > topC) { topC = c; topV = v; } });
-    var s = { pts: pts, n: n, mean: mean, mrBar: mrBar, topV: topV, topShare: n ? topC / n : 0, constant: mrBar === 0 };
+    var s = { pts: pts, n: n, base: m, frozen: m < n, mean: mean, mrBar: mrBar, topV: topV,
+      topShare: n ? topC / n : 0, constant: mrBar === 0 };
     if (!s.constant) {
       s.sigma = mrBar / 1.128;
       s.ucl = mean + 3 * s.sigma;
@@ -521,7 +552,47 @@ __FOOTER__
     }
     return found.sort(function (a, b) { return a.from - b.from; });
   }
-  window.BPM = { series: series, patterns: patterns };
+
+  /* Capability over every batch shown, against spec limits the user enters (the source data has none).
+     Cpk uses the short-term sigma (average moving range / 1.128), Ppk the overall standard deviation. */
+  function capability(s, lsl, usl) {
+    if (s.n < 2 || (lsl === null && usl === null)) return null;
+    var vals = s.pts.map(function (p) { return p.v; }), n = vals.length;
+    var mean = vals.reduce(function (a, v) { return a + v; }, 0) / n;
+    var sdOverall = Math.sqrt(vals.reduce(function (a, v) { return a + (v - mean) * (v - mean); }, 0) / (n - 1));
+    var sdWithin = s.pts.slice(1).reduce(function (a, p) { return a + p.mr; }, 0) / (n - 1) / 1.128;
+    function index(sd) {
+      if (!(sd > 0)) return null;
+      var sides = [];
+      if (usl !== null) sides.push((usl - mean) / (3 * sd));
+      if (lsl !== null) sides.push((mean - lsl) / (3 * sd));
+      return Math.min.apply(null, sides);
+    }
+    return { n: n, mean: mean, sdWithin: sdWithin, sdOverall: sdOverall, cpk: index(sdWithin), ppk: index(sdOverall) };
+  }
+
+  /* Signals for every batch across every quality attribute, with the same rules and limits as the charts.
+     Attributes where most results repeat one value are skipped, since their limits are unreliable. */
+  var signalCache = {};
+  function batchSignals(base) {
+    if (signalCache[base]) return signalCache[base];
+    var out = {};
+    D.codes.forEach(function (c) {
+      D.attrs.forEach(function (a) {
+        var s = series(c[0], a[1], base);
+        if (s.constant || s.topShare >= 0.5) return;
+        s.pts.forEach(function (p) {
+          var why = [];
+          if (p.flag) why.push("beyond 3σ");
+          if (p.mrFlag) why.push("large jump from the previous batch");
+          (p.rules || []).forEach(function (t) { var r = t.split(":")[0].toLowerCase(); if (why.indexOf(r) < 0) why.push(r); });
+          if (why.length) (out[p.batch] = out[p.batch] || []).push(a[0] + ": " + why.join(", "));
+        });
+      });
+    });
+    return (signalCache[base] = out);
+  }
+  window.BPM = { series: series, patterns: patterns, capability: capability, batchSignals: batchSignals };
 
   /* ---------- SVG chart ---------- */
   function niceStep(range, count) {
@@ -564,11 +635,17 @@ __FOOTER__
       cfg.xTitle));
 
     cfg.lines.forEach(function (l) {
-      svg.appendChild(el("line", { x1: m.l, x2: W - m.r, y1: Y(l.v), y2: Y(l.v), stroke: "#8A96AA",
+      svg.appendChild(el("line", { x1: m.l, x2: W - m.r, y1: Y(l.v), y2: Y(l.v), stroke: l.color || "#8A96AA",
         "stroke-width": 1.2, "stroke-dasharray": l.dash ? "5 4" : "none", opacity: 0.9 }));
-      svg.appendChild(el("text", { x: W - m.r + 8, y: Y(l.v), "dominant-baseline": "central", fill: "#A3AFC2",
+      svg.appendChild(el("text", { x: W - m.r + 8, y: Y(l.v), "dominant-baseline": "central", fill: l.color || "#A3AFC2",
         "font-size": 11 }, l.label));
     });
+    if (cfg.vline) {   // where frozen limits stop being set and start being applied
+      var vx = X(cfg.vline.x);
+      svg.appendChild(el("line", { x1: vx, x2: vx, y1: m.t, y2: H - m.b, stroke: "#7CB8FF", "stroke-width": 1,
+        "stroke-dasharray": "3 4", opacity: 0.7 }));
+      if (cfg.vline.label) svg.appendChild(el("text", { x: vx + 6, y: m.t + 10, fill: "#7CB8FF", "font-size": 11 }, cfg.vline.label));
+    }
 
     if (pts.length > 1) {
       var d = pts.map(function (p, i) { return (i ? "L" : "M") + X(p.x).toFixed(1) + " " + Y(p.y).toFixed(1); }).join(" ");
@@ -614,25 +691,64 @@ __FOOTER__
   }
 
   /* ---------- Process trending ---------- */
-  var fCode = $("f-code"), fAttr = $("f-attr");
+  var fCode = $("f-code"), fAttr = $("f-attr"), fMode = $("f-mode"), fLsl = $("f-lsl"), fUsl = $("f-usl");
+  var specs = {};   // spec limits typed in by the user, kept per quality attribute
   D.codes.forEach(function (c) { fCode.appendChild(option(c[0], c[0] + "  (" + c[1] + " batches)")); });
   D.attrs.forEach(function (a, i) { fAttr.appendChild(option(i, a[0])); });
+  fMode.appendChild(option("all", "All batches (retrospective)"));
+  fMode.appendChild(option("base", "First " + D.baseline + " batches, then frozen"));
   fCode.addEventListener("change", renderTrend);
-  fAttr.addEventListener("change", renderTrend);
+  fAttr.addEventListener("change", function () {
+    var sp = specs[fAttr.value] || {};
+    fLsl.value = sp.lsl || ""; fUsl.value = sp.usl || "";
+    renderTrend();
+  });
+  [fLsl, fUsl].forEach(function (input) {
+    input.addEventListener("input", function () { specs[fAttr.value] = { lsl: fLsl.value, usl: fUsl.value }; renderTrend(); });
+  });
+  fMode.addEventListener("change", function () { renderTrend(); if (shown.lots) renderLots(); });
+  function limitsBase() { return fMode.value === "base" ? D.baseline : 0; }
+  function specValue(input) { var t = input.value.trim(); if (t === "") return null; var v = Number(t); return isFinite(v) ? v : null; }
+
+  function renderCapability(s, lsl, usl, badSpec, dp) {
+    var box = $("t-cap");
+    box.className = "cap";
+    if (lsl === null && usl === null) {
+      box.textContent = "Enter a lower or upper spec limit, or both, to see Cpk and Ppk. The source data doesn't include spec limits, so none are filled in.";
+      return;
+    }
+    if (badSpec) { box.className = "cap err"; box.textContent = "The lower spec limit has to be below the upper one."; return; }
+    var c = capability(s, lsl, usl);
+    if (!c || c.cpk === null || c.ppk === null) { box.textContent = "Cpk and Ppk can't be calculated for this selection."; return; }
+    var out = s.pts.filter(function (p) { return (lsl !== null && p.v < lsl) || (usl !== null && p.v > usl); }).length;
+    box.innerHTML = "Over all " + c.n + " batches: Cpk <b>" + c.cpk.toFixed(2) + "</b> (short-term σ " + fmt(c.sdWithin, dp + 1) +
+      "), Ppk <b>" + c.ppk.toFixed(2) + "</b> (overall σ " + fmt(c.sdOverall, dp + 1) + ")" +
+      (out ? ". <b>" + out + "</b> " + (out === 1 ? "batch falls" : "batches fall") + " outside the limits entered."
+        : ". Every batch falls inside the limits entered.");
+  }
 
   function renderTrend() {
     var code = fCode.value, a = D.attrs[+fAttr.value], label = a[0], key = a[1], dp = a[2];
-    var s = series(code, key);
-    $("t-sub").textContent = label + " for product code " + code + ", " + s.n + " batches in production order";
+    var s = series(code, key, limitsBase());
+    var lsl = specValue(fLsl), usl = specValue(fUsl), badSpec = lsl !== null && usl !== null && lsl >= usl;
+    var basis = s.frozen ? ". Limits set from the first " + s.base + ", later batches judged against them"
+      : limitsBase() ? ". All of them fall within the first " + D.baseline + ", so every batch sets the limits" : "";
+    $("t-sub").textContent = label + " for product code " + code + ", " + s.n + " batches in production order" + basis;
     $("t-legend").hidden = s.constant;
+    $("t-leg-base").hidden = !s.frozen;
+    $("t-leg-spec").hidden = badSpec || (lsl === null && usl === null);
     var banner = $("t-banner");
     if (s.constant) {
-      kpis($("t-kpis"), [["Batches", String(s.n)], ["Reported value", fmt(s.topV, dp)], ["Control limits", "Not calculable", "quiet"]]);
+      var shownV = s.frozen ? s.pts[0].v : s.topV;
+      kpis($("t-kpis"), [["Batches", String(s.n)], ["Reported value", fmt(shownV, dp)], ["Control limits", "Not calculable", "quiet"]]);
       banner.className = "banner info"; banner.hidden = false;
-      banner.textContent = "All " + s.n + " results for product code " + code + " are " + fmt(s.topV, dp) +
-        ", so control limits can't be calculated. Identical values like this often reflect results recorded at a reporting limit.";
+      banner.textContent = s.frozen
+        ? "The first " + s.base + " results for product code " + code + " are all " + fmt(shownV, dp) +
+          ", so control limits can't be set from them. Switch to all batches to chart this attribute."
+        : "All " + s.n + " results for product code " + code + " are " + fmt(s.topV, dp) +
+          ", so control limits can't be calculated. Identical values like this often reflect results recorded at a reporting limit.";
     } else {
-      kpis($("t-kpis"), [["Batches", String(s.n)], ["Process mean", fmt(s.mean, dp)], ["Lower control limit", fmt(s.lcl, dp)],
+      kpis($("t-kpis"), [["Batches", String(s.n)], [s.frozen ? "Baseline mean" : "Process mean", fmt(s.mean, dp)], ["Lower control limit", fmt(s.lcl, dp)],
         ["Upper control limit", fmt(s.ucl, dp)], ["Points beyond limits", String(s.signals), s.signals ? "signal" : ""],
         ["Moving range signals", String(s.mrSignals), s.mrSignals ? "signal" : ""],
         ["Shifts and trends", String(s.runs.length), s.runs.length ? "warn" : ""]]);
@@ -648,11 +764,17 @@ __FOOTER__
         '<div class="k">Started ' + esc(p.month) + "</div>" + (p.flag ? '<div class="sig">Beyond control limits</div>' : "") +
         (p.rules || []).map(function (t) { return '<div class="run">' + esc(t) + "</div>"; }).join("");
     };
+    renderCapability(s, lsl, usl, badSpec, dp);
     var iLines = s.constant ? [] : [
       { v: s.ucl, label: "UCL " + fmt(s.ucl, dp), dash: true },
       { v: s.mean, label: "Mean " + fmt(s.mean, dp), dash: false },
       { v: s.lcl, label: "LCL " + fmt(s.lcl, dp), dash: true }];
-    drawChart($("c-i"), { height: 300, aria: "Individuals chart", lines: iLines, tip: tipI, xTitle: s.constant ? "Batch sequence (production order)" : "",
+    if (!badSpec) {
+      if (usl !== null) iLines.push({ v: usl, label: "USL " + fmt(usl, dp), color: "#F2C35B" });
+      if (lsl !== null) iLines.push({ v: lsl, label: "LSL " + fmt(lsl, dp), color: "#F2C35B" });
+    }
+    var vline = s.frozen ? { x: s.base + 0.5, label: "Limits frozen" } : null;
+    drawChart($("c-i"), { height: 300, aria: "Individuals chart", lines: iLines, vline: vline, tip: tipI, xTitle: s.constant ? "Batch sequence (production order)" : "",
       pts: s.pts.map(function (p) { return { x: p.x, y: p.v, batch: p.batch, month: p.month, flag: !!p.flag, run: !!p.run, rules: p.rules }; }) });
 
     if (s.constant) {
@@ -663,6 +785,7 @@ __FOOTER__
           '<div class="k">Change from the previous batch</div>' + (p.flag ? '<div class="sig">Beyond the upper limit</div>' : "");
       };
       drawChart($("c-mr"), { height: 170, aria: "Moving range chart", floorZero: true, tip: tipMR, yTicks: 3, xTitle: "Batch sequence (production order)",
+        vline: vline ? { x: vline.x } : null,
         lines: [{ v: s.mrUcl, label: "UCL " + fmt(s.mrUcl, dp), dash: true }, { v: s.mrBar, label: "Average " + fmt(s.mrBar, dp), dash: false }],
         pts: s.pts.slice(1).map(function (p) { return { x: p.x, y: p.mr, batch: p.batch, month: p.month, flag: p.mrFlag }; }) });
     }
@@ -725,29 +848,45 @@ __FOOTER__
     fLot.innerHTML = "";
     lots.forEach(function (l) { fLot.appendChild(option(l[0], l[0] + "  (" + l[1] + (l[1] === 1 ? " batch)" : " batches)"))); });
   }
+  var fShow = $("f-show"), trended = new Set(D.codes.map(function (c) { return c[0]; }));
   fMat.addEventListener("change", function () { fillLots(); renderLots(); });
   fLot.addEventListener("change", renderLots);
+  fShow.addEventListener("change", renderLots);
   fillLots();
 
+  function signalCell(r, why) {
+    if (!trended.has(r[I.PRODUCT_CODE])) return '<span class="muted">Not trended</span>';
+    if (!why.length) return '<span class="muted">None</span>';
+    return '<span class="pill warn">' + why.length + (why.length === 1 ? " signal" : " signals") + "</span>" +
+      why.slice(0, 2).map(function (w) { return '<div class="why">' + esc(w) + "</div>"; }).join("") +
+      (why.length > 2 ? '<div class="why">and ' + (why.length - 2) + " more</div>" : "");
+  }
+
   function renderLots() {
-    var mat = D.materials[+fMat.value], lot = fLot.value;
+    var mat = D.materials[+fMat.value], lot = fLot.value, base = limitsBase(), sig = batchSignals(base);
     var used = R.filter(function (r) { return lotKey(r, mat) === lot; })
       .sort(function (a, b) { return a[I.MONTH_KEY].localeCompare(b[I.MONTH_KEY]) || a[I.BATCH_SEQ] - b[I.BATCH_SEQ]; });
     var codes = new Set(used.map(function (r) { return r[I.PRODUCT_CODE]; }));
+    var flagged = used.filter(function (r) { return (sig[r[I.BATCH]] || []).length; });
     kpis($("l-kpis"), [["Finished batches", String(used.length)], ["Product codes", String(codes.size)],
-      ["First use", used.length ? used[0][I.MONTH] : "–"], ["Last use", used.length ? used[used.length - 1][I.MONTH] : "–"]]);
-    var body = used.map(function (r) {
+      ["First use", used.length ? used[0][I.MONTH] : "–"], ["Last use", used.length ? used[used.length - 1][I.MONTH] : "–"],
+      ["Batches with signals", flagged.length + " of " + used.length, flagged.length ? "warn" : ""]]);
+    var rows = fShow.value === "sig" ? flagged : used;
+    var body = rows.map(function (r) {
       return "<tr><td>" + esc(r[I.BATCH]) + "</td><td>" + esc(r[I.PRODUCT_CODE]) + "</td><td>" + esc(r[I.STRENGTH]) + "</td><td>" +
         esc(r[I.MONTH]) + '</td><td class="num">' + fmt(r[I.DISSOLUTION_AV], 2) + '</td><td class="num">' + fmt(r[I.DISSOLUTION_MIN], 2) +
-        '</td><td class="num">' + fmt(r[I.IMPURITIES_TOTAL], 3) + "</td></tr>";
-    }).join("");
-    var note = mat[0] === "API"
+        '</td><td class="num">' + fmt(r[I.IMPURITIES_TOTAL], 3) + "</td><td>" + signalCell(r, sig[r[I.BATCH]] || []) + "</td></tr>";
+    }).join("") || '<tr><td colspan="8" class="muted">No batches made with this lot have signals.</td></tr>';
+    var note = (mat[0] === "API"
       ? "API lot numbers are reused across API sources, so an API lot is identified by its source and lot number together."
-      : "The source data has no supplier field for excipients, so excipient lots are identified by lot number alone.";
+      : "The source data has no supplier field for excipients, so excipient lots are identified by lot number alone.") +
+      " Signals use the same rules and limits as Process trending (" +
+      (base ? "first " + D.baseline + " batches, then frozen" : "limits from all batches") +
+      "), skipping attributes where most results repeat one value. Codes with fewer than " + D.minBatches + " batches aren't trended.";
     $("l-table").innerHTML = '<div class="panel-head"><h2>Finished batches made with ' + esc(mat[0].toLowerCase() === "api" ? "API" : mat[0].toLowerCase()) +
       " " + esc(lot.charAt(0).toLowerCase() + lot.slice(1)) + '</h2><p class="hint">' + esc(note) + "</p></div>" +
       '<div class="tbl-wrap scroll"><table><thead><tr><th>Batch</th><th>Product code</th><th>Strength</th><th>Start month</th>' +
-      '<th class="num">Dissolution, average</th><th class="num">Dissolution, minimum</th><th class="num">Total impurities</th></tr></thead><tbody>' +
+      '<th class="num">Dissolution, average</th><th class="num">Dissolution, minimum</th><th class="num">Total impurities</th><th>Signals</th></tr></thead><tbody>' +
       body + "</tbody></table></div>";
   }
 
