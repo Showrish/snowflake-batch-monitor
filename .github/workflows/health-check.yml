@@ -1,0 +1,51 @@
+name: Monthly health check
+
+# Once a month this rebuilds the DuckDB database from Laboratory.csv with the
+# same pinned SHA-256 fingerprint and expected-value checks the live app uses,
+# then adds a dated line to ops/health-log.md and commits it.
+# The commit also keeps the repo active. GitHub switches off scheduled
+# workflows in a public repo after 60 days without activity, which would
+# otherwise stop keep-awake.
+
+on:
+  schedule:
+    - cron: "41 13 1 * *"   # the 1st of every month, 13:41 UTC
+  workflow_dispatch:        # lets you run it by hand from the Actions tab
+
+permissions:
+  contents: write   # commit the log line
+  actions: read     # read the latest keep-awake result
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install the pinned packages
+        timeout-minutes: 6
+        run: pip install -r local/requirements.txt
+
+      - name: Rebuild the database and run every check
+        timeout-minutes: 5
+        run: |
+          rm -f batch_monitor.duckdb
+          python local/build_duckdb.py
+          test -f batch_monitor.duckdb  # the build only puts the database in place when every check passes
+
+      - name: Add a line to the health log and commit it
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          awake=$(gh run list --workflow keep-awake.yml --status completed --limit 1 --json conclusion --jq '.[0].conclusion')
+          echo "- $(date -u +%F): source fingerprint verified, all build checks passed, latest keep-awake run: ${awake:-unknown}" >> ops/health-log.md
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ops/health-log.md
+          git commit -m "Monthly health check $(date -u +%F)"
+          git push
