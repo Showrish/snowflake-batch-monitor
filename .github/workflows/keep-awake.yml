@@ -3,7 +3,8 @@ name: Keep app awake
 # Streamlit Community Cloud puts apps to sleep after a stretch with no visitors.
 # Every 4 hours this opens the live app in a headless browser, like a real visit,
 # wakes it if it has gone to sleep, and fails if the dashboard doesn't render,
-# so a broken app shows up as a failed run.
+# so a broken app shows up as a failed run. Each run keeps a screenshot of what
+# the browser saw, downloadable from the run page for 7 days.
 
 on:
   schedule:
@@ -26,7 +27,7 @@ jobs:
         run: pip install playwright
 
       - name: Visit the app and check the dashboard renders
-        timeout-minutes: 5
+        timeout-minutes: 7
         run: |
           python - <<'PY'
           import os, sys, time
@@ -34,6 +35,8 @@ jobs:
 
           url = os.environ["APP_URL"]
           TITLE = "Batch performance monitor"
+          WAKE_BUTTON = "Yes, get this app back up"  # matched as a substring, so the "!" is optional
+          WINDOW_SECONDS = 210
 
           def dashboard_found(page):
               for frame in page.frames:  # the dashboard sits inside nested frames
@@ -44,24 +47,28 @@ jobs:
                       pass
               return False
 
-          with sync_playwright() as p:
-              browser = p.chromium.launch(channel="chrome")  # Chrome comes preinstalled on the runner
-              page = browser.new_page()
-              page.goto(url, wait_until="domcontentloaded", timeout=60_000)
-              page.wait_for_timeout(8_000)
-
+          def click_wake_button(page):
               for frame in page.frames:
                   try:
-                      button = frame.get_by_role("button", name="Yes, get this app back up!")
+                      button = frame.get_by_role("button", name=WAKE_BUTTON)
                       if button.count():
                           button.first.click()
-                          print("App was asleep. Clicked the wake button.")
-                          break
+                          return True
                   except Exception:
                       pass
+              return False
 
-              deadline = time.time() + 150
+          with sync_playwright() as p:
+              browser = p.chromium.launch(channel="chrome")  # Chrome comes preinstalled on the runner
+              page = browser.new_page(viewport={"width": 1440, "height": 900})
+              page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+
+              # Look for the wake button on every pass, not just once, so a
+              # sleep page that loads slowly still gets woken.
+              deadline = time.time() + WINDOW_SECONDS
               while time.time() < deadline and not dashboard_found(page):
+                  if click_wake_button(page):
+                      print("App was asleep. Clicked the wake button.")
                   page.wait_for_timeout(5_000)
 
               ok = dashboard_found(page)
@@ -69,7 +76,21 @@ jobs:
                   print("Dashboard rendered.")
                   page.wait_for_timeout(15_000)  # stay long enough to count as a visit
               else:
-                  print("Dashboard did not render within 150 seconds.")
+                  print(f"Dashboard did not render within {WINDOW_SECONDS} seconds.")
+
+              try:
+                  page.screenshot(path="keep-awake.png")
+              except Exception as error:
+                  print(f"Could not save a screenshot: {error}")
               browser.close()
               sys.exit(0 if ok else 1)
           PY
+
+      - name: Keep a screenshot of the visit
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: keep-awake-screenshot
+          path: keep-awake.png
+          retention-days: 7
+          if-no-files-found: ignore

@@ -164,6 +164,8 @@ the database on its own if it's missing.
 | [`Laboratory.csv`](Laboratory.csv) | Source data, CC BY 4.0 |
 | [`verify_profile.py`](verify_profile.py) | Independent pandas verification |
 | [`.github/workflows/keep-awake.yml`](.github/workflows/keep-awake.yml) | Keeps the live app from going to sleep |
+| .github/workflows/health-check.yml | Monthly rebuild with every check, logged to ops/health-log.md |
+| ops/health-log.md | One dated line per monthly health check |
 | [`screenshots/`](screenshots/) | Dashboard examples |
 
 ## Limitations
