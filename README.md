@@ -4,7 +4,7 @@
 
 An end-to-end data integrity project using **1,005 publicly released production batches**. Batch Monitor preserves the source, standardizes it in a view, reconciles the results against independent pandas calculations, and includes a read-only **Streamlit** app for data checks, process trending, and material genealogy. It was built in Snowflake, and since the trial ended it also runs on DuckDB, which powers the live app.
 
-**[Open the live app](https://batch-monitor.streamlit.app)** · [See profiling findings](#what-profiling-the-file-turned-up) · [How it works](#how-it-works) · [Reproduce the pipeline](#reproduce-it)
+**[Open the live app](https://batch-monitor.streamlit.app)** · [See profiling findings](#what-profiling-the-file-turned-up) · [How it works](#how-it-works) · [Reproduce the pipeline](#reproduce-it) · [Design decisions](docs/decisions.md)
 
 | Coverage | Data integrity | Operational analysis |
 | :--- | :--- | :--- |
@@ -169,6 +169,12 @@ the database on its own if it's missing.
 | [`screenshots/`](screenshots/) | Dashboard examples |
 | tests/ | Browser tests for the chart rules, limits, capability and controls, plus build tests including a tampered file |
 | .github/workflows/tests.yml | Runs the tests on every push and pull request |
+| docs/decisions.md | Why each design choice was made, and its trade-offs |
+| docs/glossary.md | Pharma, SPC and Snowflake terms used in this project |
+
+## Design decisions
+
+Why each part is built the way it is, and what each choice costs, is in [docs/decisions.md](docs/decisions.md). The pharma, SPC and Snowflake terms used here are explained in [docs/glossary.md](docs/glossary.md).
 
 ## Limitations
 
